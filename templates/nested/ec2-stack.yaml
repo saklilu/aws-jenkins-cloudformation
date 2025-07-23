@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 Instance with Jenkins and Apache'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: 'Name of the project'
+    
+  Environment:
+    Type: String
+    Description: 'Environment name'
+    
+  InstanceType:
+    Type: String
+    Description: 'EC2 instance type'
+    
+  KeyPairName:
+    Type: String
+    Description: 'EC2 Key Pair name'
+    
+  VpcId:
+    Type: String
+    Description: 'VPC ID'
+    
+  PublicSubnetId:
+    Type: String
+    Description: 'Public Subnet ID'
+    
+  WebSecurityGroupId:
+    Type: String
+    Description: 'Web Security Group ID'
+    
+  JenkinsSecurityGroupId:
+    Type: String
+    Description: 'Jenkins Security Group ID'
+    
+  IAMInstanceProfile:
+    Type: String
+    Description: 'IAM Instance Profile name'
+    
+  TemplatesBucketName:
+    Type: String
+    Description: 'S3 bucket name containing templates'
+
+Mappings:
+  AWSInstanceType2Arch:
+    t3.micro:
+      Arch: HVM64
+    t3.small:
+      Arch: HVM64
+    t3.medium:
+      Arch: HVM64
+    t3.large:
+      Arch: HVM64
+    t3.xlarge:
+      Arch: HVM64
+
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
+    us-east-2:
+      HVM64: ami-0f924dc71d44d23e2  # Ubuntu 22.04 LTS
+    us-west-1:
+      HVM64: ami-0d197186689f01ec3  # Ubuntu 22.04 LTS
+    us-west-2:
+      HVM64: ami-0c2d3e23bce8b2b5c  # Ubuntu 22.04 LTS
+    eu-west-1:
+      HVM64: ami-08ca3fed11864d6bb  # Ubuntu 22.04 LTS
+    eu-central-1:
+      HVM64: ami-04e601abe3e1a910f  # Ubuntu 22.04 LTS
+    ap-southeast-1:
+      HVM64: ami-0c802847a7dd848c0  # Ubuntu 22.04 LTS
+    ap-northeast-1:
+      HVM64: ami-03f4fa076d2981b45  # Ubuntu 22.04 LTS
+
+Resources:
+  # Network Interface
+  NetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnetId
+      GroupSet:
+        - !Ref WebSecurityGroupId
+        - !Ref JenkinsSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eni'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Elastic IP
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eip'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      NetworkInterfaceId: !Ref NetworkInterface
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: 1
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref AWS::Region
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref IAMInstanceProfile
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref NetworkInterface
+          DeviceIndex: 0
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 20
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          
+          # Install cfn-signal
+          apt-get update -y
+          apt-get install -y python3-pip
+          pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+          
+          # Set environment variables for user data script
+          export PROJECT_NAME="${ProjectName}"
+          export ENVIRONMENT="${Environment}"
+          export INSTANCE_TYPE="${InstanceType}"
+          
+          # Download and execute the main setup script
+          aws s3 cp s3://${TemplatesBucketName}/templates/userdata/jenkins-apache-setup.sh /tmp/setup.sh
+          chmod +x /tmp/setup.sh
+          
+          # Execute setup script
+          /tmp/setup.sh
+          
+          # Signal completion
+          /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-instance'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  InstanceId:
+    Description: 'EC2 Instance ID'
+    Value: !Ref EC2Instance
+
+  PublicIP:
+    Description: 'Public IP address'
+    Value: !Ref ElasticIP
+
+  PrivateIP:
+    Description: 'Private IP address'
+    Value: !GetAtt EC2Instance.PrivateIp
+
+  NetworkInterfaceId:
+    Description: 'Network Interface ID'
+    Value: !Ref NetworkInterface

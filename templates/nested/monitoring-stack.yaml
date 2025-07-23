@@ -1,0 +1,263 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch Monitoring and Logging for Jenkins and Apache'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: 'Name of the project'
+    
+  Environment:
+    Type: String
+    Description: 'Environment name'
+    
+  InstanceId:
+    Type: String
+    Description: 'EC2 Instance ID to monitor'
+
+Resources:
+  # CloudWatch Log Groups
+  JenkinsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${ProjectName}-${Environment}-jenkins'
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-jenkins-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ApacheLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${ProjectName}-${Environment}-apache'
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-apache-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # SNS Topic for Alerts
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts'
+      DisplayName: !Sub '${ProjectName} ${Environment} Infrastructure Alerts'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # CloudWatch Alarms
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-high-cpu'
+      AlarmDescription: 'Alarm when CPU exceeds 80%'
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref InstanceId
+      AlarmActions:
+        - !Ref AlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-high-cpu-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-high-memory'
+      AlarmDescription: 'Alarm when memory usage exceeds 85%'
+      MetricName: mem_used_percent
+      Namespace: !Sub '${ProjectName}-${Environment}'
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref InstanceId
+      AlarmActions:
+        - !Ref AlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-high-memory-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  HighDiskUsageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-high-disk-usage'
+      AlarmDescription: 'Alarm when disk usage exceeds 85%'
+      MetricName: used_percent
+      Namespace: !Sub '${ProjectName}-${Environment}'
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref InstanceId
+        - Name: device
+          Value: '/dev/xvda1'
+        - Name: fstype
+          Value: 'ext4'
+        - Name: path
+          Value: '/'
+      AlarmActions:
+        - !Ref AlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-high-disk-usage-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  InstanceStatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-instance-status-check'
+      AlarmDescription: 'Alarm when instance status check fails'
+      MetricName: StatusCheckFailed
+      Namespace: AWS/EC2
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref InstanceId
+      AlarmActions:
+        - !Ref AlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-instance-status-check'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # CloudWatch Dashboard
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${InstanceId}"],
+                  ["${ProjectName}-${Environment}", "mem_used_percent", "InstanceId", "${InstanceId}"],
+                  [".", "used_percent", "InstanceId", "${InstanceId}", "device", "/dev/xvda1", "fstype", "ext4", "path", "/"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "EC2 Instance Metrics",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/EC2", "NetworkIn", "InstanceId", "${InstanceId}"],
+                  [".", "NetworkOut", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Network I/O"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${JenkinsLogGroup}' | fields @timestamp, @message | sort @timestamp desc | limit 100",
+                "region": "${AWS::Region}",
+                "title": "Recent Jenkins Logs",
+                "view": "table"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${ApacheLogGroup}' | fields @timestamp, @message | sort @timestamp desc | limit 100",
+                "region": "${AWS::Region}",
+                "title": "Recent Apache Logs",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  JenkinsLogGroupName:
+    Description: 'Jenkins CloudWatch Log Group Name'
+    Value: !Ref JenkinsLogGroup
+
+  ApacheLogGroupName:
+    Description: 'Apache CloudWatch Log Group Name'
+    Value: !Ref ApacheLogGroup
+
+  SNSTopicArn:
+    Description: 'SNS Topic ARN for alerts'
+    Value: !Ref AlertsTopic
+
+  DashboardURL:
+    Description: 'CloudWatch Dashboard URL'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MonitoringDashboard}'
+
+  DashboardName:
+    Description: 'CloudWatch Dashboard Name'
+    Value: !Ref MonitoringDashboard

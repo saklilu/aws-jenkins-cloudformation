@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete Jenkins & Apache2 Infrastructure on AWS - Main Stack'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'jenkins-apache'
+    Description: 'Name of the project'
+    
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues: ['dev', 'staging', 'prod']
+    Description: 'Environment name'
+    
+  InstanceType:
+    Type: String
+    Default: 't3.medium'
+    AllowedValues: 
+      - 't3.micro'
+      - 't3.small'
+      - 't3.medium'
+      - 't3.large'
+      - 't3.xlarge'
+    Description: 'EC2 instance type'
+    
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: 'Name of an existing EC2 KeyPair for SSH access'
+    
+  VpcCidr:
+    Type: String
+    Default: '10.0.0.0/16'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+    Description: 'CIDR block for VPC'
+    
+  PublicSubnet1Cidr:
+    Type: String
+    Default: '10.0.1.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+    Description: 'CIDR block for Public Subnet 1'
+    
+  PublicSubnet2Cidr:
+    Type: String
+    Default: '10.0.2.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+    Description: 'CIDR block for Public Subnet 2'
+    
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: '10.0.10.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+    Description: 'CIDR block for Private Subnet 1'
+    
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: '10.0.20.0/24'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$'
+    Description: 'CIDR block for Private Subnet 2'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Project Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+      - Label:
+          default: 'EC2 Configuration'
+        Parameters:
+          - InstanceType
+          - KeyPairName
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcCidr
+          - PublicSubnet1Cidr
+          - PublicSubnet2Cidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+
+Resources:
+  # VPC and Networking Stack
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 
+        - 'https://${BucketName}.s3.${AWS::Region}.amazonaws.com/templates/nested/vpc-stack.yaml'
+        - BucketName: !Ref TemplatesBucket
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcCidr: !Ref VpcCidr
+        PublicSubnet1Cidr: !Ref PublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref PublicSubnet2Cidr
+        PrivateSubnet1Cidr: !Ref PrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-network-stack'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM Stack
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 
+        - 'https://${BucketName}.s3.${AWS::Region}.amazonaws.com/templates/nested/iam-stack.yaml'
+        - BucketName: !Ref TemplatesBucket
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-iam-stack'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Security Stack
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkStack
+    Properties:
+      TemplateURL: !Sub 
+        - 'https://${BucketName}.s3.${AWS::Region}.amazonaws.com/templates/nested/security-stack.yaml'
+        - BucketName: !Ref TemplatesBucket
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-security-stack'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # EC2 Stack
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: 
+      - NetworkStack
+      - SecurityStack
+      - IAMStack
+    Properties:
+      TemplateURL: !Sub 
+        - 'https://${BucketName}.s3.${AWS::Region}.amazonaws.com/templates/nested/ec2-stack.yaml'
+        - BucketName: !Ref TemplatesBucket
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        InstanceType: !Ref InstanceType
+        KeyPairName: !Ref KeyPairName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnetId: !GetAtt NetworkStack.Outputs.PublicSubnet1Id
+        WebSecurityGroupId: !GetAtt SecurityStack.Outputs.WebSecurityGroupId
+        JenkinsSecurityGroupId: !GetAtt SecurityStack.Outputs.JenkinsSecurityGroupId
+        IAMInstanceProfile: !GetAtt IAMStack.Outputs.EC2InstanceProfile
+        TemplatesBucketName: !Ref TemplatesBucket
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-ec2-stack'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Monitoring Stack
+  MonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: EC2Stack
+    Properties:
+      TemplateURL: !Sub 
+        - 'https://${BucketName}.s3.${AWS::Region}.amazonaws.com/templates/nested/monitoring-stack.yaml'
+        - BucketName: !Ref TemplatesBucket
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        InstanceId: !GetAtt EC2Stack.Outputs.InstanceId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-monitoring-stack'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # S3 Bucket for templates (created inline to avoid chicken-and-egg problem)
+  TemplatesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-cfn-templates-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cfn-templates'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  VpcId:
+    Description: 'VPC ID'
+    Value: !GetAtt NetworkStack.Outputs.VpcId
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-VpcId'
+
+  PublicIP:
+    Description: 'Public IP address of the EC2 instance'
+    Value: !GetAtt EC2Stack.Outputs.PublicIP
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-PublicIP'
+
+  InstanceId:
+    Description: 'EC2 Instance ID'
+    Value: !GetAtt EC2Stack.Outputs.InstanceId
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-InstanceId'
+
+  JenkinsURL:
+    Description: 'URL to access Jenkins'
+    Value: !Sub 
+      - 'http://${PublicIP}:8080'
+      - PublicIP: !GetAtt EC2Stack.Outputs.PublicIP
+
+  ApacheURL:
+    Description: 'URL to access Apache web server'
+    Value: !Sub 
+      - 'http://${PublicIP}'
+      - PublicIP: !GetAtt EC2Stack.Outputs.PublicIP
+
+  SSHCommand:
+    Description: 'SSH command to connect to the instance'
+    Value: !Sub 
+      - 'ssh -i ~/.ssh/${KeyName}.pem ubuntu@${PublicIP}'
+      - KeyName: !Ref KeyPairName
+        PublicIP: !GetAtt EC2Stack.Outputs.PublicIP
+
+  DashboardURL:
+    Description: 'CloudWatch Dashboard URL'
+    Value: !GetAtt MonitoringStack.Outputs.DashboardURL
+
+  TemplatesBucketName:
+    Description: 'S3 Bucket for CloudFormation Templates'
+    Value: !Ref TemplatesBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-TemplatesBucket'

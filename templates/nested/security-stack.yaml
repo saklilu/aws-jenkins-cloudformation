@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Security Groups for Jenkins and Apache'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: 'Name of the project'
+    
+  Environment:
+    Type: String
+    Description: 'Environment name'
+    
+  VpcId:
+    Type: String
+    Description: 'VPC ID where security groups will be created'
+
+Resources:
+  # Web Security Group (HTTP, HTTPS, SSH)
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-${Environment}-web-sg'
+      GroupDescription: 'Security group for web server (HTTP, HTTPS, SSH)'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTP traffic'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: 'HTTPS traffic'
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: 'SSH access'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-web-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Jenkins Security Group
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-${Environment}-jenkins-sg'
+      GroupDescription: 'Security group for Jenkins CI/CD'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: 'Jenkins Web UI'
+        - IpProtocol: tcp
+          FromPort: 50000
+          ToPort: 50000
+          CidrIp: 0.0.0.0/0
+          Description: 'Jenkins JNLP (agent connection)'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-jenkins-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  WebSecurityGroupId:
+    Description: 'Web Security Group ID'
+    Value: !Ref WebSecurityGroup
+
+  JenkinsSecurityGroupId:
+    Description: 'Jenkins Security Group ID'
+    Value: !Ref JenkinsSecurityGroup
